@@ -15,9 +15,11 @@ use aes::{
     cipher::{generic_array::GenericArray, BlockCipher, BlockDecrypt, BlockEncrypt, KeyInit},
     Aes128,
 };
+use rand::Rng;
 
 ///We're using AES 128 which has 16-byte (128 bit) blocks.
 const BLOCK_SIZE: usize = 16;
+const IV: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
 
 fn main() {
     todo!("Maybe this should be a library crate. TBD");
@@ -75,6 +77,20 @@ fn pad(mut data: Vec<u8>) -> Vec<u8> {
     }
 
     data
+}
+
+/// Does the opposite of the pad function.
+fn unpad(data: Vec<u8>) -> Vec<u8> {
+    let mut unpadded_data: Vec<u8> = Default::default();
+    let last_byte = data.last().copied().unwrap() as usize;
+
+    if last_byte == BLOCK_SIZE {
+        unpadded_data = data[..data.len() - BLOCK_SIZE].to_vec();
+    } else {
+        unpadded_data = data[..data.len() - last_byte].to_vec();
+    }
+
+    unpadded_data
 }
 
 /// Groups the data into BLOCK_SIZE blocks. Assumes the data is already
@@ -169,13 +185,51 @@ fn ecb_decrypt(cipher_text: Vec<u8>, key: [u8; BLOCK_SIZE]) -> Vec<u8> {
 /// very first block because it doesn't have a previous block. Typically this IV
 /// is inserted as the first block of ciphertext.
 fn cbc_encrypt(plain_text: Vec<u8>, key: [u8; BLOCK_SIZE]) -> Vec<u8> {
-    // Remember to generate a random initialization vector for the first block.
+    let mut prev_cipher_text: [u8; BLOCK_SIZE] = IV;
+    let mut cipher_text = Vec::new();
+    let grouped_blocks = group(pad(plain_text));
 
-    todo!()
+    for block in grouped_blocks {
+        let xor_block = xor(&prev_cipher_text, &block);
+
+        let mut xor_slice = [0u8; 16];
+        xor_slice.copy_from_slice(&xor_block[..16]);
+
+        let encrypted_block = aes_encrypt(xor_slice, &key);
+        cipher_text.extend(encrypted_block);
+        prev_cipher_text = encrypted_block;
+    }
+
+    cipher_text
 }
 
 fn cbc_decrypt(cipher_text: Vec<u8>, key: [u8; BLOCK_SIZE]) -> Vec<u8> {
-    todo!()
+    let mut decrypted: Vec<u8> = Vec::with_capacity(cipher_text.len());
+    let mut prev_cipher_text: [u8; BLOCK_SIZE] = [0; BLOCK_SIZE];
+    let grouped_blocks = group(cipher_text);
+
+    for block in grouped_blocks {
+        let decrypted_block = aes_decrypt(block, &key);
+        let plaintext_block = xor(&prev_cipher_text, &decrypted_block);
+
+        decrypted.extend_from_slice(&plaintext_block[..]);
+        prev_cipher_text.copy_from_slice(&block);
+    }
+
+    unpad(decrypted)
+}
+
+/// XOR 2 byte slices
+pub fn xor(buffer_1: &[u8], buffer_2: &[u8]) -> Vec<u8> {
+    assert_eq!(buffer_1.len(), buffer_2.len());
+
+    let mut bytes: Vec<u8> = Vec::with_capacity(buffer_1.len());
+
+    for i in 0..buffer_1.len() {
+        bytes.push(buffer_1[i] ^ buffer_2[i]);
+    }
+
+    bytes
 }
 
 /// Another mode which you can implement on your own is counter mode.
